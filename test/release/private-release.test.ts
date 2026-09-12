@@ -26,7 +26,10 @@ test("private manual main publication has a serial, least-privilege artifact bou
   expect(workflow).toContain("PUBLISH_SUCCEEDED: ${{ steps.publication.outputs.published }}")
   expect(workflow).not.toContain("node scripts/verify-publication.mjs preflight")
   expect(workflow).toContain("node scripts/verify-publication.mjs verify")
+  expect(workflow.indexOf("node scripts/verify-publication.mjs metadata")).toBeLessThan(workflow.indexOf('npm view "$package_spec"'))
+  expect(workflow.indexOf("node scripts/verify-publication.mjs download")).toBeLessThan(workflow.indexOf("npm install --json"))
+  expect(workflow).toContain('--save-exact "$REGISTRY_DOWNLOAD_DIRECTORY/$tarball"')
   expect(workflow).toContain("private-publication-${{ needs.validate.outputs.package_version }}")
-  expect(workflow).toContain("npm install --ignore-scripts --no-audit --no-fund --save-exact")
+  expect(workflow).toContain("npm install --json --ignore-scripts --no-audit --no-fund --save-exact")
 })
 

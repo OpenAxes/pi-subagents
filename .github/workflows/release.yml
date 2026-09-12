@@ -237,12 +237,17 @@ jobs:
           set -euo pipefail
           node scripts/verify-publication.mjs initialize
           trap 'node scripts/verify-publication.mjs blocked' ERR
+          export VERIFICATION_PHASE=private-metadata
+          node scripts/verify-publication.mjs metadata
           export VERIFICATION_PHASE=registry-metadata
           package_spec="@openaxes/pi-subagents@$EXPECTED_PACKAGE_VERSION"
           mkdir -p "$REGISTRY_DOWNLOAD_DIRECTORY" "$REGISTRY_INSTALL_DIRECTORY"
           npm view "$package_spec" --json --registry https://npm.pkg.github.com > "$REGISTRY_PACKAGE_METADATA_FILE"
           export VERIFICATION_PHASE=registry-download
           npm pack "$package_spec" --json --ignore-scripts --registry https://npm.pkg.github.com --pack-destination "$REGISTRY_DOWNLOAD_DIRECTORY" > "$REGISTRY_PACK_METADATA_FILE"
+          export VERIFICATION_PHASE=registry-digest
+          node scripts/verify-publication.mjs download
+          tarball="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.env.REGISTRY_PACK_METADATA_FILE, "utf8"))[0].filename')"
           echo '{"private":true}' > "$REGISTRY_INSTALL_DIRECTORY/package.json"
           # Only public dependencies use npmjs; the OpenAxes scope remains private GitHub Packages.
           {
@@ -250,7 +255,7 @@ jobs:
             echo '@openaxes:registry=https://npm.pkg.github.com'
           } > "$REGISTRY_INSTALL_DIRECTORY/.npmrc"
           export VERIFICATION_PHASE=registry-install
-          (cd "$REGISTRY_INSTALL_DIRECTORY" && npm install --ignore-scripts --no-audit --no-fund --save-exact "$package_spec") > "$RUNNER_TEMP/registry-install.stdout" 2> "$RUNNER_TEMP/registry-install.stderr"
+          (cd "$REGISTRY_INSTALL_DIRECTORY" && npm install --json --ignore-scripts --no-audit --no-fund --save-exact "$REGISTRY_DOWNLOAD_DIRECTORY/$tarball") > "$RUNNER_TEMP/registry-install.stdout" 2> "$RUNNER_TEMP/registry-install.stderr"
           export VERIFICATION_PHASE=private-metadata-and-artifact-validation
           node scripts/verify-publication.mjs verify
 

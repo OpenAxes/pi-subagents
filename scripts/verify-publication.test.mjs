@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expectedName } from "./verify-package.mjs";
-import { lookupExactPackage, requirePrivatePackage } from "./verify-publication.mjs";
+import { lookupExactPackage, requirePrivatePackage, summarizeNpmFailure } from "./verify-publication.mjs";
 
 const name = "@openaxes/example";
 const repository = "OpenAxes/example";
@@ -25,7 +25,11 @@ test("failure receipt distinguishes a published version without exposing authent
   const temporary = mkdtempSync(path.join(tmpdir(), "private-publication-receipt-"));
   const env = { ...process.env, RUNNER_TEMP: temporary, GITHUB_REPOSITORY: `OpenAxes/${expectedName.split("/")[1]}`, PUBLISH_SUCCEEDED: "true", NODE_AUTH_TOKEN: "synthetic-fixture-only", VERIFICATION_PHASE: "registry-install" };
   try {
-    for (const mode of ["initialize", "blocked"]) execFileSync(process.execPath, [path.join(import.meta.dirname, "verify-publication.mjs"), mode], { env });
+    execFileSync(process.execPath, [path.join(import.meta.dirname, "verify-publication.mjs"), "initialize"], { env });
+    const receiptPath = path.join(temporary, "private-publication.json");
+    writeFileSync(receiptPath, JSON.stringify({ ...JSON.parse(readFileSync(receiptPath, "utf8")), visibility: "private", repository, privateMetadataVerified: true, registryDownloadVerified: true, registryTarballSha256: "a".repeat(64) }));
+    writeFileSync(path.join(temporary, "registry-install.stdout"), JSON.stringify({ error: { code: "ETARGET", summary: `Never export ${env.NODE_AUTH_TOKEN}` } }));
+    execFileSync(process.execPath, [path.join(import.meta.dirname, "verify-publication.mjs"), "blocked"], { env });
     const raw = readFileSync(path.join(temporary, "private-publication.json"), "utf8");
     const receipt = JSON.parse(raw);
     assert.equal(receipt.publicationSucceeded, true);
@@ -33,9 +37,22 @@ test("failure receipt distinguishes a published version without exposing authent
     assert.equal(receipt.status, "publication-succeeded; verification-blocked");
     assert.equal(receipt.phase, "registry-install");
     assert(!raw.includes(env.NODE_AUTH_TOKEN));
+    assert.equal(receipt.visibility, "private");
+    assert.equal(receipt.privateMetadataVerified, true);
+    assert.equal(receipt.registryDownloadVerified, true);
+    assert.equal(receipt.npmFailure.code, "ETARGET");
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test("npm diagnostics report only allowlisted codes and fixed non-secret details", () => {
+  const secret = "synthetic-private-value";
+  assert.deepEqual(summarizeNpmFailure(JSON.stringify({ error: { code: "E403", summary: `Bearer ${secret}` } }), ""), { code: "E403", httpStatus: 403, details: "Registry permission denied." });
+  assert.equal(summarizeNpmFailure("not JSON", `npm error code ERESOLVE\nnpm error ${secret}`).code, "ERESOLVE");
+  const unknown = summarizeNpmFailure(JSON.stringify({ error: { code: secret, detail: secret } }), secret);
+  assert.equal(unknown.code, "UNKNOWN");
+  assert(!JSON.stringify(unknown).includes(secret));
 });
 
 test("only actual PRIVATE visibility and exact repository linkage pass", () => {

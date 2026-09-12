@@ -28,7 +28,7 @@ test("actual npm tarball inventory and rejection of tampered publication metadat
       const alias = path.join(temporary, "node_modules/pi-subagents");
       mkdirSync(alias, { recursive: true });
       writeFileSync(path.join(alias, "index.js"), "export default {};\n");
-      for (const [name, version] of [["pi-subagents", "0.66.0"], ["@openaxes/pi-subagents", "0.67.0"]]) {
+      for (const [name, version] of [["pi-subagents", "0.66.0"], ["@openaxes/pi-subagents", "0.67.0"], ["@openaxes/pi-subagents", "0.66.0-openaxes.1"]]) {
         writeFileSync(path.join(alias, "package.json"), JSON.stringify({ name, version, type: "module", exports: "./index.js" }));
         await assert.rejects(loadPiSdkPayload(), /PI_SDK_PACKAGE_IDENTITY_MISMATCH/);
       }

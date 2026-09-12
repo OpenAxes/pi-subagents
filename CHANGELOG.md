@@ -1,3 +1,9 @@
+# OpenAxes distribution 0.66.0-openaxes.2
+
+- Correct the remaining project-panes public API test self-import for the scoped distribution, retaining every assertion and full Linux gate.
+- Verify PRIVATE metadata and downloaded artifact digest before a genuine npm install; retain bounded non-secret failure diagnostics.
+- Roll forward from the failed .1 release without moving or reusing its tag. No accepted runtime safety source changes.
+
 # OpenAxes distribution 0.66.0-openaxes.1
 
 - Publish the reviewed native identity/settlement fork under `@openaxes/pi-subagents`, restricted GitHub Packages registry and explicit `openaxes` prerelease dist-tag.
