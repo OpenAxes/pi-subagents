@@ -1,3 +1,9 @@
+# OpenAxes distribution 0.66.0-openaxes.1
+
+- Publish the reviewed native identity/settlement fork under `@openaxes/pi-subagents`, restricted GitHub Packages registry and explicit `openaxes` prerelease dist-tag.
+- Owner-directed main-only manual release, annotated provenance, digest-bound tarball validation and publisher-only package-write permission.
+- Preserve upstream MIT/author attribution and all runtime implementation.
+
 # Changelog
 
 ## [Unreleased]

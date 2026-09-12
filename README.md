@@ -1,3 +1,9 @@
+# OpenAxes private distribution
+
+This public source fork publishes **`@openaxes/pi-subagents@0.66.0-openaxes.1` privately** to `https://npm.pkg.github.com`, dist-tag `openaxes`. It is based on upstream 0.66.0 plus the reviewed native identity/settlement overlay; upstream MIT license and Nico Bailon attribution are preserved. No publication of the upstream unscoped name is permitted.
+
+For the opt-in OpenAxes governance SDK host, install this single alias: `pi-subagents@npm:@openaxes/pi-subagents@0.66.0-openaxes.1`. Do not also install another scoped/unscoped fork graph. Host-provided Pi SDK 0.85.1 is the accepted SDK boundary; neither upstream 0.66.0 nor installed orchestration 0.67.0 is this artifact. See [private releases](docs/releasing.md). Upstream documentation below retains historical names/URLs and describes general delegation capabilities, not governance stock-CLI enrollment support.
+
 <p>
   <img src="https://raw.githubusercontent.com/nicobailon/pi-subagents/main/banner.png" alt="pi-subagents" width="1100">
 </p>
@@ -125,3 +131,5 @@ The full reference lives in `docs/`:
 | [Missions and schedules](https://github.com/nicobailon/pi-subagents/blob/main/docs/missions.md) | Durable mission records, delivery receipts, timed and recurring runs. |
 | [Configuration](https://github.com/nicobailon/pi-subagents/blob/main/docs/configuration.md) | Every `config.json` key and environment variable. |
 | [Extension API](https://github.com/nicobailon/pi-subagents/blob/main/docs/extension-api.md) | The RPC, delegation API, preflight, capability ceilings, [trusted workflow resources](docs/extension-api.md#trusted-workflow-resources), background-work providers, Herdr integration. |
+
+The historical upstream-cloning `install.mjs` remains source-only and is excluded from the npm files and binary surface. Use the exact private npm alias in the SDK host; no replacement CLI installer is introduced.

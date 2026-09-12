@@ -35,10 +35,10 @@ test("the root entrypoint and launch-identity API typecheck for TypeScript consu
 	const consumerRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-types-"));
 	try {
 		fs.writeFileSync(path.join(consumerRoot, "consumer.ts"), `
-import "pi-subagents";
+import "@openaxes/pi-subagents";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import { registerWorkflowResource, type RegisterWorkflowResourceInput, type WorkflowResourceDefinition, type WorkflowResourceRegistration } from "pi-subagents/workflow-resources";
-import { resolveNativeChildLaunchIdentity, type NativeChildLaunchIdentityResult } from "pi-subagents/launch-identity";
+import { registerWorkflowResource, type RegisterWorkflowResourceInput, type WorkflowResourceDefinition, type WorkflowResourceRegistration } from "@openaxes/pi-subagents/workflow-resources";
+import { resolveNativeChildLaunchIdentity, type NativeChildLaunchIdentityResult } from "@openaxes/pi-subagents/launch-identity";
 
 const definition: WorkflowResourceDefinition = {
 	name: "consumer.check", version: 1,
@@ -73,9 +73,9 @@ void identity.role;
 				allowImportingTsExtensions: true,
 				baseUrl: consumerRoot,
 				paths: {
-					"pi-subagents": [path.join(projectRoot, "index.ts")],
-					"pi-subagents/workflow-resources": [path.join(projectRoot, "src/api/workflow-resources.ts")],
-					"pi-subagents/launch-identity": [path.join(projectRoot, "src/api/launch-identity.ts")],
+					"@openaxes/pi-subagents": [path.join(projectRoot, "index.ts")],
+					"@openaxes/pi-subagents/workflow-resources": [path.join(projectRoot, "src/api/workflow-resources.ts")],
+					"@openaxes/pi-subagents/launch-identity": [path.join(projectRoot, "src/api/launch-identity.ts")],
 				"@earendil-works/pi-agent-core": [path.join(projectRoot, "node_modules", "@earendil-works", "pi-agent-core", "dist", "index.d.ts")],
 				},
 			},
@@ -135,49 +135,49 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./launch-identity": "./src/api/launch-identity.ts",
 		"./native-settlement": "./src/api/native-settlement.ts",
 	});
-	const agents = await import("pi-subagents/agents");
+	const agents = await import("@openaxes/pi-subagents/agents");
 	assert.equal(agents.RUNTIME_AGENT_REGISTER_EVENT, "pi-subagents:runtime-agent-register:v1");
 	assert.equal(agents.RUNTIME_AGENT_REGISTER_VERSION, 1);
 	assert.equal(typeof agents.registerAgentViaEvents, "function");
-	const backgroundWork = await import("pi-subagents/background-work");
+	const backgroundWork = await import("@openaxes/pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");
-	const externalJobProvider = await import("pi-subagents/external-job-provider");
+	const externalJobProvider = await import("@openaxes/pi-subagents/external-job-provider");
 	assert.equal(externalJobProvider.EXTERNAL_JOB_PROVIDER_PROTOCOL_VERSION, 1);
 	assert.equal(externalJobProvider.EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, "pi-subagents.external-job-providers.v1");
 	assert.equal(typeof externalJobProvider.registerExternalJobProvider, "function");
-	const externalRuns = await import("pi-subagents/external-runs");
+	const externalRuns = await import("@openaxes/pi-subagents/external-runs");
 	assert.equal(externalRuns.EXTERNAL_RUN_REGISTRY_VERSION, 2);
 	assert.equal(typeof externalRuns.registerExternalRun, "function");
 	assert.equal(typeof externalRuns.updateExternalRun, "function");
 	assert.equal(typeof externalRuns.snapshotExternalRuns, "function");
 	assert.equal(typeof externalRuns.unregisterExternalRun, "function");
-	const capability = await import("pi-subagents/capability-ceiling");
-	const workflowResources = await import("pi-subagents/workflow-resources");
+	const capability = await import("@openaxes/pi-subagents/capability-ceiling");
+	const workflowResources = await import("@openaxes/pi-subagents/workflow-resources");
 	assert.deepEqual(Object.keys(workflowResources), ["registerWorkflowResource"]);
 	assert.equal(typeof workflowResources.registerWorkflowResource, "function");
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_VERSION, 1);
 	assert.equal(capability.SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY, "pi-subagents.capability-ceiling.v1");
-	const delegation = await import("pi-subagents/delegation");
+	const delegation = await import("@openaxes/pi-subagents/delegation");
 	assert.equal(delegation.SUBAGENT_DELEGATION_REQUEST_EVENT, "prompt-template:subagent:request");
-	const preflight = await import("pi-subagents/preflight");
+	const preflight = await import("@openaxes/pi-subagents/preflight");
 	assert.equal(preflight.SUBAGENT_LAUNCH_CONTRACT_VERSION, 2);
 	assert.equal(typeof preflight.resolveSubagentLaunchContract, "function");
-	const controlChannel = await import("pi-subagents/control-channel");
+	const controlChannel = await import("@openaxes/pi-subagents/control-channel");
 	assert.equal(typeof controlChannel.requestAsyncStop, "function");
-	const intercomBridge = await import("pi-subagents/intercom-bridge");
+	const intercomBridge = await import("@openaxes/pi-subagents/intercom-bridge");
 	assert.equal(typeof intercomBridge.resolveIntercomSessionTarget, "function");
-	const childToolPlan = await import("pi-subagents/child-tool-plan");
+	const childToolPlan = await import("@openaxes/pi-subagents/child-tool-plan");
 	assert.equal(typeof childToolPlan.resolvePiLaunchToolPlan, "function");
 	assert.deepEqual(Object.keys(childToolPlan).sort(), ["resolvePiLaunchToolPlan"]);
-	const sharedTypes = await import("pi-subagents/shared-types");
+	const sharedTypes = await import("@openaxes/pi-subagents/shared-types");
 	assert.equal(typeof sharedTypes.wrapForkTask, "function");
 	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");
 	assert.equal("TEMP_ROOT_DIR" in sharedTypes, false);
-	const launchIdentity = await import("pi-subagents/launch-identity");
+	const launchIdentity = await import("@openaxes/pi-subagents/launch-identity");
 	assert.deepEqual(Object.keys(launchIdentity), ["resolveNativeChildLaunchIdentity"]);
 	assert.equal(launchIdentity.resolveNativeChildLaunchIdentity({}).verified, false);
-	const projectPanes = await import("pi-subagents/project-panes");
+	const projectPanes = await import("@openaxes/pi-subagents/project-panes");
 	assert.equal(projectPanes.PROJECT_PANES_API_VERSION, 1);
 	assert.equal(typeof projectPanes.openProjectPane, "function");
 	assert.equal(typeof projectPanes.getProjectPaneStatus, "function");

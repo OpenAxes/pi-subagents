@@ -1,28 +1,220 @@
-name: Release
+name: Release Private Package
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing annotated release tag at the selected main commit"
+        required: true
+        type: string
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: private-package-release
   cancel-in-progress: false
 
 jobs:
-  publish:
+  validate:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tag_object_id: ${{ steps.provenance.outputs.tag_object_id }}
+      commit_sha: ${{ steps.provenance.outputs.commit_sha }}
+      package_filename: ${{ steps.package.outputs.package_filename }}
+      package_sha256: ${{ steps.package.outputs.package_sha256 }}
+      package_version: ${{ steps.package.outputs.package_version }}
+
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-      - name: Install devDependencies
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.10
+
+      - name: Configure Node.js for GitHub Packages
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+          registry-url: https://npm.pkg.github.com
+          scope: "@openaxes"
+
+      - name: Fetch current main and release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force origin \
+            "refs/heads/main:refs/remotes/origin/main" \
+            "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+
+      - name: Verify main tag provenance
+        id: provenance
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          provenance="$(bun run scripts/verify-release-version.ts "$RELEASE_TAG" "$GITHUB_SHA" "$GITHUB_REF")"
+          PROVENANCE_JSON="$provenance" node --input-type=module <<'NODE'
+          import { appendFileSync } from "node:fs"
+
+          const provenance = JSON.parse(process.env.PROVENANCE_JSON ?? "null")
+          if (!provenance || !/^[a-f0-9]{40}$/.test(provenance.tagObjectId) || !/^[a-f0-9]{40}$/.test(provenance.commitSha)) {
+            throw new Error("Release verifier did not return immutable provenance.")
+          }
+          if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(provenance.version)) {
+            throw new Error("Release verifier returned an invalid package version.")
+          }
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `tag_object_id=${provenance.tagObjectId}\ncommit_sha=${provenance.commitSha}\npackage_version=${provenance.version}\n`,
+          )
+          NODE
+
+      - name: Install dependencies
         run: npm ci --ignore-scripts
-      - name: Run tests
-        run: npm run test:all
-      - name: Publish to npm
-        run: npm publish --provenance
+
+      - name: Validate, test, and build
+        run: npm run typecheck && npm run test:all && npm run test:release
+
+      - name: Verify package inventory
+        run: bun run pack:check
+
+      - name: Create digest-bound package artifact
+        id: package
+        shell: bash
+        env:
+          EXPECTED_PACKAGE_VERSION: ${{ steps.provenance.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          npm pack --json --ignore-scripts > "$RUNNER_TEMP/npm-pack.json"
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto"
+          import { appendFileSync, readFileSync } from "node:fs"
+          import { basename } from "node:path"
+
+          const metadata = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/npm-pack.json`, "utf8"))
+          if (!Array.isArray(metadata) || metadata.length !== 1) throw new Error("npm pack must create exactly one package.")
+          const { filename, version, name } = metadata[0]
+          if (name !== "@openaxes/pi-subagents") throw new Error("Unexpected npm package identity.")
+          if (typeof filename !== "string" || basename(filename) !== filename || !/^[A-Za-z0-9._-]+\.tgz$/.test(filename)) {
+            throw new Error("npm pack returned an unsafe package filename.")
+          }
+          if (version !== process.env.EXPECTED_PACKAGE_VERSION) throw new Error("npm pack version does not match validated provenance.")
+          const digest = createHash("sha256").update(readFileSync(filename)).digest("hex")
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `package_filename=${filename}\npackage_sha256=${digest}\npackage_version=${version}\n`,
+          )
+          NODE
+          filename="$(node -p 'require(process.env.RUNNER_TEMP + "/npm-pack.json")[0].filename')"
+          node scripts/verify-package.mjs "$filename" "$EXPECTED_PACKAGE_VERSION"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: npm-package-${{ steps.package.outputs.package_sha256 }}
+          path: ${{ steps.package.outputs.package_filename }}
+          if-no-files-found: error
+
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out validated release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.validate.outputs.commit_sha }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.10
+
+      - name: Download validated package artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: npm-package-${{ needs.validate.outputs.package_sha256 }}
+          path: release-artifact
+
+      - name: Set up Node.js for GitHub Packages
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.15.0
+          registry-url: https://npm.pkg.github.com
+          scope: "@openaxes"
+
+      - name: Revalidate provenance and digest-bound artifact
+        shell: bash
+        env:
+          ARTIFACT_DIRECTORY: release-artifact
+          EXPECTED_COMMIT_SHA: ${{ needs.validate.outputs.commit_sha }}
+          EXPECTED_PACKAGE_FILENAME: ${{ needs.validate.outputs.package_filename }}
+          EXPECTED_PACKAGE_SHA256: ${{ needs.validate.outputs.package_sha256 }}
+          EXPECTED_PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
+          EXPECTED_TAG_OBJECT_ID: ${{ needs.validate.outputs.tag_object_id }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --force origin \
+            "refs/heads/main:refs/remotes/origin/main" \
+            "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          revalidated="$(bun run scripts/verify-release-version.ts \
+            "$RELEASE_TAG" "$EXPECTED_COMMIT_SHA" "refs/heads/main" "$EXPECTED_TAG_OBJECT_ID")"
+          REVALIDATED_JSON="$revalidated" node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto"
+          import { readFileSync } from "node:fs"
+          import { basename, join } from "node:path"
+
+          const provenance = JSON.parse(process.env.REVALIDATED_JSON ?? "null")
+          if (
+            provenance?.tagObjectId !== process.env.EXPECTED_TAG_OBJECT_ID ||
+            provenance?.commitSha !== process.env.EXPECTED_COMMIT_SHA ||
+            provenance?.version !== process.env.EXPECTED_PACKAGE_VERSION
+          ) {
+            throw new Error("Current release provenance differs from the validated job outputs.")
+          }
+          const filename = process.env.EXPECTED_PACKAGE_FILENAME ?? ""
+          if (basename(filename) !== filename || !/^[A-Za-z0-9._-]+\.tgz$/.test(filename)) {
+            throw new Error("Validated package filename is unsafe.")
+          }
+          const packagePath = join(process.env.ARTIFACT_DIRECTORY ?? "", filename)
+          const digest = createHash("sha256").update(readFileSync(packagePath)).digest("hex")
+          if (digest !== process.env.EXPECTED_PACKAGE_SHA256) throw new Error("Downloaded package digest does not match validation.")
+          NODE
+          node scripts/verify-package.mjs "$ARTIFACT_DIRECTORY/$EXPECTED_PACKAGE_FILENAME" "$EXPECTED_PACKAGE_VERSION"
+
+      - name: Publish exact private package (never replace a version)
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_PACKAGE_FILENAME: ${{ needs.validate.outputs.package_filename }}
+          EXPECTED_PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          # Only an authenticated E404 means unused. Authentication/network failures are fatal.
+          if npm view "@openaxes/pi-subagents@$EXPECTED_PACKAGE_VERSION" version --json --registry https://npm.pkg.github.com > "$RUNNER_TEMP/version-lookup.json" 2> "$RUNNER_TEMP/version-lookup.stderr"; then
+            echo "Package version already exists; refusing publication." >&2
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs"
+          const result = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/version-lookup.json`, "utf8"))
+          if (result?.error?.code !== "E404") throw new Error("Package lookup did not prove an unused version.")
+          NODE
+          npm publish "$GITHUB_WORKSPACE/release-artifact/$EXPECTED_PACKAGE_FILENAME" --ignore-scripts --access restricted --registry https://npm.pkg.github.com --tag openaxes

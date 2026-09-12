@@ -1,6 +1,6 @@
 {
-  "name": "pi-subagents",
-  "version": "0.66.0",
+  "name": "@openaxes/pi-subagents",
+  "version": "0.66.0-openaxes.1",
   "description": "Pi extension for single-agent delegation and scripted multi-agent workflows",
   "author": "Nico Bailon",
   "license": "MIT",
@@ -25,11 +25,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-subagents.git"
+    "url": "git+https://github.com/OpenAxes/pi-subagents.git"
   },
-  "homepage": "https://github.com/nicobailon/pi-subagents#readme",
+  "homepage": "https://github.com/OpenAxes/pi-subagents#readme",
   "bugs": {
-    "url": "https://github.com/nicobailon/pi-subagents/issues"
+    "url": "https://github.com/OpenAxes/pi-subagents/issues"
   },
   "keywords": [
     "pi-package",
@@ -40,9 +40,6 @@
     "agents",
     "cli"
   ],
-  "bin": {
-    "pi-subagents": "install.mjs"
-  },
   "files": [
     "index.ts",
     "src/**/*.ts",
@@ -52,14 +49,17 @@
     "prompts/**/*",
     "docs/**/*",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "!install.mjs"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
     "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
     "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
-    "test:all": "npm run test:unit && npm run test:integration"
+    "test:all": "npm run test:unit && npm run test:integration",
+    "test:release": "bun test test/release",
+    "pack:check": "node scripts/check-package.mjs && node --test scripts/package.test.mjs"
   },
   "pi": {
     "extensions": [
@@ -109,5 +109,9 @@
     "oxlint": "1.80.0",
     "typescript": "5.9.3",
     "@earendil-works/pi-coding-agent": "file:./test/fixtures/pi-coding-agent-shim"
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "registry": "https://npm.pkg.github.com"
   }
 }
