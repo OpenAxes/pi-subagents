@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { getHostBuiltinToolNames, resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
+import { applyThinkingSuffix, supervisorChannelDir, getHostBuiltinToolNames, resolvePiLaunchToolPlan } from "../../src/runs/shared/child-tool-plan.ts";
 import { buildInProcessChildLaunch } from "../../src/runs/shared/child-launch.ts";
 import { MCP_RUNTIME_SNAPSHOT_EVENT, MCP_RUNTIME_SNAPSHOT_VERSION, type McpRuntimeSnapshotHost } from "../../src/runs/shared/mcp-direct-tool-allowlist.ts";
 
@@ -154,6 +154,108 @@ describe("child tool plan host builtin intersection", () => {
 		});
 		assert.deepEqual(plan.declaredBuiltinTools, ["bash"]);
 		assert.deepEqual(plan.unavailableHostBuiltins, ["read", "grep"]);
+	});
+});
+
+describe("mixed builtin and extension availability regression", () => {
+	const reportTool = "governance_write_report";
+	const auditTool = "governance_write_audit_result";
+	const childExtension = "/fixture/governance-child.ts";
+	// Exercise the actual builtin-only extractor, not an inventory widened to extension tools.
+	const hostAvailableBuiltins = getHostBuiltinToolNames({
+		getAllTools: () => [
+			{ name: "read", sourceInfo: { source: "builtin" } },
+			{ name: "bash", sourceInfo: { source: "builtin" } },
+			{ name: reportTool, sourceInfo: { source: "extension" } },
+			{ name: auditTool, sourceInfo: { source: "extension" } },
+		],
+	});
+
+	it("preserves declared extension requirements beside real builtin availability without granting undeclared tools", () => {
+		assert.deepEqual(hostAvailableBuiltins, ["read", "bash"]);
+		const plan = resolvePiLaunchToolPlan({
+			tools: ["read", "grep", reportTool, auditTool],
+			hostAvailableBuiltins,
+			subagentOnlyExtensions: [childExtension],
+			capabilityCeiling: { version: 1, allowedTools: ["read", "grep", reportTool, auditTool, "undeclared_tool"], denyExtensions: false, sources: ["mixed-host"] },
+		});
+		assert.deepEqual(plan.effectiveToolAllowlist, ["read", reportTool, auditTool],
+			"MIXED_HOST_EXTENSION_PRUNED: builtin-only availability must not erase declared extension requirements");
+		assert.deepEqual(plan.requiredChildTools, ["read", reportTool, auditTool]);
+		assert.deepEqual(plan.unavailableHostBuiltins, ["grep"]);
+		assert.deepEqual(plan.capabilityAudit?.unavailableHostBuiltins, ["grep"]);
+		assert.deepEqual(plan.configuredExtensions, [childExtension]);
+		assert.equal(plan.effectiveToolAllowlist.includes("undeclared_tool"), false);
+	});
+
+	it("still denies extension names removed by either ceiling or explicit exclusions", () => {
+		for (const restriction of [
+			{ capabilityCeiling: { version: 1 as const, allowedTools: ["read"], sources: ["local-denial"] } },
+			{ inheritedCapabilityCeiling: { version: 1 as const, allowedTools: ["read"], sources: ["inherited-denial"] } },
+			{ excludeTools: [reportTool] },
+		]) {
+			const plan = resolvePiLaunchToolPlan({ tools: ["read", reportTool], hostAvailableBuiltins, ...restriction });
+			assert.deepEqual(plan.effectiveToolAllowlist, ["read"]);
+			assert.deepEqual(plan.requiredChildTools, ["read"]);
+		}
+	});
+
+	it("denyExtensions still removes configured providers and disables ambient extension loading", () => {
+		const plan = resolvePiLaunchToolPlan({
+			tools: ["read", reportTool, "/fixture/tool.ts"], hostAvailableBuiltins,
+			extensions: ["/fixture/ambient.ts"], subagentOnlyExtensions: [childExtension],
+			capabilityCeiling: { version: 1, allowedTools: ["read", reportTool], denyExtensions: true, sources: ["extension-denial"] },
+		});
+		assert.equal(plan.disableAmbientExtensions, true);
+		assert.deepEqual(plan.configuredExtensions, []);
+		assert.deepEqual(plan.toolExtensionPaths, []);
+		assert.equal(plan.extensionArgs.includes(childExtension), false);
+		assert.equal(plan.capabilityAudit?.extensionsDenied, true);
+		assert.equal(plan.capabilityAudit?.removedExtensionCount, 3);
+	});
+
+	it("does not relax mandatory read or native fanout restrictions in mixed plans", () => {
+		assert.throws(() => resolvePiLaunchToolPlan({ tools: [reportTool], requireReadTool: true, hostAvailableBuiltins: ["bash"] }), /Host runtime does not provide required tool 'read'/);
+		assert.throws(() => resolvePiLaunchToolPlan({ tools: [reportTool], requireReadTool: true, hostAvailableBuiltins,
+			capabilityCeiling: { version: 1, allowedTools: [reportTool], sources: ["no-read"] } }), /excludes required tool 'read'/);
+		assert.throws(() => resolvePiLaunchToolPlan({ tools: ["subagent_supervisor", reportTool], hostAvailableBuiltins }), /requires fanout authorization/);
+	});
+
+	it("retains unknown declared names as child requirements, not evidence that a provider exists", () => {
+		const plan = resolvePiLaunchToolPlan({ tools: ["read", "fixture_unregistered_tool"], hostAvailableBuiltins });
+		assert.deepEqual(plan.requiredChildTools, ["read", "fixture_unregistered_tool"],
+			"Unknown declared names must reach genuine child required-tool validation instead of disappearing");
+		assert.deepEqual(plan.configuredExtensions, []);
+	});
+
+	it("distinguishes absent from explicitly empty builtin inventory without erasing extension requirements", () => {
+		const absent = resolvePiLaunchToolPlan({ tools: ["read", reportTool] });
+		assert.deepEqual(absent.effectiveToolAllowlist, ["read", reportTool]);
+		const empty = resolvePiLaunchToolPlan({ tools: ["read", reportTool], hostAvailableBuiltins: [] });
+		assert.deepEqual(empty.effectiveToolAllowlist, [reportTool]);
+		assert.deepEqual(empty.unavailableHostBuiltins, ["read"]);
+	});
+});
+
+describe("planner helper coverage for the changed file", () => {
+	it("normalizes supervisor channel segments without accepting separators", () => {
+		assert.match(path.basename(supervisorChannelDir(" /run/ ", "---", 2)), /^run-unknown-2$/);
+		assert.match(path.basename(supervisorChannelDir("root", "agent.name", 0)), /^root-agent.name-0$/);
+	});
+	it("preserves or replaces explicit thinking suffixes deliberately", () => {
+		assert.equal(applyThinkingSuffix(undefined, "high"), undefined);
+		assert.equal(applyThinkingSuffix("provider/model", false), "provider/model");
+		assert.equal(applyThinkingSuffix("provider/model", "high"), "provider/model:high");
+		assert.equal(applyThinkingSuffix("provider/model:low", "high"), "provider/model:low");
+		assert.equal(applyThinkingSuffix("provider/model:low", "high", true), "provider/model:high");
+	});
+	it("requires explicit compatible fast-mode models and retains empty-extension warnings", () => {
+		assert.throws(() => resolvePiLaunchToolPlan({ fast: true }), /explicit supported/);
+		assert.throws(() => resolvePiLaunchToolPlan({ fast: true, agentName: "fixture" }), /fixture/);
+		assert.throws(() => resolvePiLaunchToolPlan({ fast: true, model: "unsupported" }), /unsupported model/);
+		assert.throws(() => resolvePiLaunchToolPlan({ fast: true, modelCandidates: ["a", "b"] }), /unsupported models/);
+		assert.ok(resolvePiLaunchToolPlan({ fast: true, model: "openai-codex/gpt-5.6-sol:high" }).runtimeExtensions.some(p => p.endsWith("fast-mode-extension.ts")));
+		assert.ok(resolvePiLaunchToolPlan({ extensions: [], agentName: "fixture" }).warnings.some(message => message.includes("disables ALL ambient")));
 	});
 });
 

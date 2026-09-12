@@ -1,3 +1,9 @@
+# OpenAxes distribution 0.66.0-openaxes.3
+
+- Preserve declared extension-tool requirements when the parent also exposes ordinary SDK builtins; builtin availability filtering still applies to genuine builtins.
+- Keep ceilings, exclusions, denied extension loading, required-child validation and native coordination restrictions unchanged.
+- This is a newly tested planner revision, not an assertion that historical fork source hashes are unchanged.
+
 # OpenAxes distribution 0.66.0-openaxes.2
 
 - Correct the remaining project-panes public API test self-import for the scoped distribution, retaining every assertion and full Linux gate.

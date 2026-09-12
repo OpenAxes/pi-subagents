@@ -1,8 +1,8 @@
 # OpenAxes private distribution
 
-This public source fork publishes **`@openaxes/pi-subagents@0.66.0-openaxes.2` privately** to `https://npm.pkg.github.com`, dist-tag `openaxes`. It is based on upstream 0.66.0 plus the reviewed native identity/settlement overlay; upstream MIT license and Nico Bailon attribution are preserved. No publication of the upstream unscoped name is permitted.
+This public source fork publishes **`@openaxes/pi-subagents@0.66.0-openaxes.3` privately** to `https://npm.pkg.github.com`, dist-tag `openaxes`. It is based on upstream 0.66.0 plus the reviewed native identity/settlement overlay; upstream MIT license and Nico Bailon attribution are preserved. No publication of the upstream unscoped name is permitted.
 
-For the opt-in OpenAxes governance SDK host, install this single alias: `pi-subagents@npm:@openaxes/pi-subagents@0.66.0-openaxes.2`. Do not also install another scoped/unscoped fork graph. Host-provided Pi SDK 0.85.1 is the accepted SDK boundary; neither upstream 0.66.0 nor installed orchestration 0.67.0 is this artifact. See [private releases](docs/releasing.md). Upstream documentation below retains historical names/URLs and describes general delegation capabilities, not governance stock-CLI enrollment support.
+For the opt-in OpenAxes governance SDK host, install this single alias: `pi-subagents@npm:@openaxes/pi-subagents@0.66.0-openaxes.3`. Do not also install another scoped/unscoped fork graph. Host-provided Pi SDK 0.85.1 is the accepted SDK boundary; neither upstream 0.66.0 nor installed orchestration 0.67.0 is this artifact. See [private releases](docs/releasing.md). Upstream documentation below retains historical names/URLs and describes general delegation capabilities, not governance stock-CLI enrollment support.
 
 <p>
   <img src="https://raw.githubusercontent.com/nicobailon/pi-subagents/main/banner.png" alt="pi-subagents" width="1100">
