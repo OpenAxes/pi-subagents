@@ -200,6 +200,7 @@ jobs:
           node scripts/verify-package.mjs "$ARTIFACT_DIRECTORY/$EXPECTED_PACKAGE_FILENAME" "$EXPECTED_PACKAGE_VERSION"
 
       - name: Publish exact private package (never replace a version)
+        id: publication
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -218,3 +219,45 @@ jobs:
           if (result?.error?.code !== "E404") throw new Error("Package lookup did not prove an unused version.")
           NODE
           npm publish "$GITHUB_WORKSPACE/release-artifact/$EXPECTED_PACKAGE_FILENAME" --ignore-scripts --access restricted --registry https://npm.pkg.github.com --tag openaxes
+
+          echo "published=true" >> "$GITHUB_OUTPUT"
+
+      - name: Verify PRIVATE visibility and registry download/install
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_SUCCEEDED: ${{ steps.publication.outputs.published }}
+          EXPECTED_PACKAGE_SHA256: ${{ needs.validate.outputs.package_sha256 }}
+          EXPECTED_PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
+          REGISTRY_PACKAGE_METADATA_FILE: ${{ runner.temp }}/registry-package.json
+          REGISTRY_PACK_METADATA_FILE: ${{ runner.temp }}/registry-pack.json
+          REGISTRY_DOWNLOAD_DIRECTORY: ${{ runner.temp }}/registry-download
+          REGISTRY_INSTALL_DIRECTORY: ${{ runner.temp }}/registry-install
+        run: |
+          set -euo pipefail
+          node scripts/verify-publication.mjs initialize
+          trap 'node scripts/verify-publication.mjs blocked' ERR
+          export VERIFICATION_PHASE=registry-metadata
+          package_spec="@openaxes/pi-subagents@$EXPECTED_PACKAGE_VERSION"
+          mkdir -p "$REGISTRY_DOWNLOAD_DIRECTORY" "$REGISTRY_INSTALL_DIRECTORY"
+          npm view "$package_spec" --json --registry https://npm.pkg.github.com > "$REGISTRY_PACKAGE_METADATA_FILE"
+          export VERIFICATION_PHASE=registry-download
+          npm pack "$package_spec" --json --ignore-scripts --registry https://npm.pkg.github.com --pack-destination "$REGISTRY_DOWNLOAD_DIRECTORY" > "$REGISTRY_PACK_METADATA_FILE"
+          echo '{"private":true}' > "$REGISTRY_INSTALL_DIRECTORY/package.json"
+          # Only public dependencies use npmjs; the OpenAxes scope remains private GitHub Packages.
+          {
+            echo 'registry=https://registry.npmjs.org'
+            echo '@openaxes:registry=https://npm.pkg.github.com'
+          } > "$REGISTRY_INSTALL_DIRECTORY/.npmrc"
+          export VERIFICATION_PHASE=registry-install
+          (cd "$REGISTRY_INSTALL_DIRECTORY" && npm install --ignore-scripts --no-audit --no-fund --save-exact "$package_spec") > "$RUNNER_TEMP/registry-install.stdout" 2> "$RUNNER_TEMP/registry-install.stderr"
+          export VERIFICATION_PHASE=private-metadata-and-artifact-validation
+          node scripts/verify-publication.mjs verify
+
+      - name: Upload non-secret private publication receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: private-publication-${{ needs.validate.outputs.package_version }}
+          path: ${{ runner.temp }}/private-publication.json
+          if-no-files-found: warn
