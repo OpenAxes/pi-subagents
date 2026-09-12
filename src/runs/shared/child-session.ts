@@ -14,6 +14,7 @@ import { getAgentDir } from "../../shared/utils.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { prepareReadonlySessionEvidence } from "./readonly-session-evidence.ts";
 import { toModelInfo, type ModelInfo } from "../../shared/model-info.ts";
+import { bindNativeChildLaunchIdentity, consumeNativeChildLaunchCertificate, reserveNativeChildLaunchCertificate } from "./launch-identity.ts";
 
 // Private runtime authority for host continuation planning; injected factories have none.
 const readonlyModels = new WeakMap<ChildSession, { current: ModelInfo; resolve(reference: string): ModelInfo | undefined; requestBytes: number }>();
@@ -208,6 +209,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 	};
 	return {
 		async create(launch) {
+			const launchReservation = reserveNativeChildLaunchCertificate(launch);
 			const observeReadonly = prepareReadonlySessionEvidence(launch);
 			const pi = await loadPiCodingAgent();
 			const modelRuntime = await sharedRuntime(pi);
@@ -267,42 +269,58 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 					settingsManager,
 					sessionStartEvent: { type: "session_start", reason: "startup" },
 				});
+				// Consume the pre-start reservation and revalidate immediately before binding.
+				// Mutating any launch field during SDK construction cannot evade the burn.
+				const launchCertificate = consumeNativeChildLaunchCertificate(launchReservation, launch);
+				const identityBinding = bindNativeChildLaunchIdentity(launchCertificate, session, sessionManager, pi);
 				try {
 					await session.bindExtensions({
 						mode: "print",
 						onError: (error) => launch.onExtensionError?.({ extensionPath: error.extensionPath, event: error.event, error: error.error }),
 					});
 				} catch (error) {
+					identityBinding?.revoke();
 					session.dispose();
 					throw error;
 				}
-				return session;
+				return { session, identityBinding };
 			};
 			const opened = loading.catch(() => {}).then(open);
 			loading = opened;
-			const session = await opened;
+			const { session, identityBinding } = await opened;
 			let evidence: ReturnType<NonNullable<typeof observeReadonly>["observe"]>;
 			try { evidence = observeReadonly?.observe(pi, modelRuntime, session); }
-			catch (error) { session.dispose(); throw error; }
+			catch (error) { identityBinding?.revoke(); session.dispose(); throw error; }
 			let pending: Promise<void> | undefined;
 			// pi's own hosts emit `session_shutdown` before disposing a session so the
 			// extensions loaded into it (ambient extensions included) release their
 			// watchers, servers, and timers. Do the same, then dispose.
 			const shutdown = async (): Promise<void> => {
+				let shutdownFailure: { error: unknown } | undefined;
 				try {
 					const runner = session.extensionRunner;
-					if (runner.hasHandlers("session_shutdown")) {
-						evidence?.beforeShutdown();
-						const settled = await Promise.race([runner.emit({ type: "session_shutdown", reason: "quit" }).then(() => true), new Promise<false>((resolve) => setTimeout(() => resolve(false), shutdownTimeoutMs).unref?.())]);
-						if (!settled) evidence?.invalidate();
-					}
+					const handlers = runner.hasHandlers("session_shutdown")
+						? (evidence?.beforeShutdown(), runner.emit({ type: "session_shutdown", reason: "quit" }))
+						: Promise.resolve();
+					identityBinding?.observeShutdownHandlers(handlers);
+					const settled = await Promise.race([handlers.then(() => true), new Promise<false>((resolve) => setTimeout(() => resolve(false), shutdownTimeoutMs).unref?.())]);
+					if (!settled) evidence?.invalidate();
 				} catch (error) {
-					evidence?.invalidate();
-					launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error });
-				} finally {
-					session.dispose();
-					evidence?.finish(child);
+					try { evidence?.invalidate(); launch.onExtensionError?.({ extensionPath: "<session>", event: "session_shutdown", error }); }
+					catch (callbackError) { shutdownFailure = { error: callbackError }; }
 				}
+				let finalizerFailure: { error: unknown } | undefined;
+				try {
+					try { session.dispose(); }
+					finally { identityBinding?.revoke(); }
+					evidence?.finish(child);
+					identityBinding?.completeFinalizer();
+				} catch (error) {
+					identityBinding?.failFinalizer();
+					finalizerFailure = { error };
+				}
+				if (finalizerFailure) throw finalizerFailure.error;
+				if (shutdownFailure) throw shutdownFailure.error;
 			};
 			const child: ChildSession = {
 				subscribe: (listener) => session.subscribe((event) => listener(event as unknown as ChildSessionEvent)),
@@ -313,7 +331,11 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				},
 				steer: (text) => { evidence?.invalidate(); return session.steer(text); },
 				followUp: (text) => { evidence?.invalidate(); return session.followUp(text); },
-				abort: () => { evidence?.invalidate(); return session.abort(); },
+				abort: async () => {
+					evidence?.invalidate();
+					try { await session.abort(); }
+					finally { identityBinding?.revoke(); }
+				},
 				dispose: () => {
 					if (!pending) {
 						live.delete(child);
@@ -329,6 +351,7 @@ export function createDefaultChildSessionFactory(options: DefaultChildSessionFac
 				get sessionId() { return session.sessionId; },
 				get modelId() { return session.model ? `${session.model.provider}/${session.model.id}` : undefined; },
 			};
+			identityBinding?.bindChild(child);
 			if (evidence && session.model) readonlyModels.set(child, {
 				current: toModelInfo(session.model),
 				requestBytes: Buffer.byteLength(session.systemPrompt) + Buffer.byteLength(JSON.stringify(session.agent.state.tools)),

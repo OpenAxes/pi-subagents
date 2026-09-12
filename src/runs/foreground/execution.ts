@@ -113,6 +113,7 @@ import {
 	type ChildWatchdogStatusEvent,
 } from "../../watchdog/child-status.ts";
 import { buildInProcessChildLaunch, createReportedChildSessionInput } from "../shared/child-launch.ts";
+import { finalizeNativeChildLaunchIdentity } from "../shared/launch-identity.ts";
 import { childSessionFactory, projectChildSessionEventForJson, type ChildSession, type ChildSessionEvent } from "../shared/child-session.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
@@ -506,6 +507,11 @@ async function runSingleAttempt(
 		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
 		...(options.extensionBindings ? { extensionBindings: options.extensionBindings } : {}),
 	});
+	const launchIdentityFinalization = { launchContractDigest };
+	if (options.context) Object.assign(launchIdentityFinalization, { context: options.context });
+	if (resolvedThinking) Object.assign(launchIdentityFinalization, { thinking: resolvedThinking });
+	if (options.launchDelegationCorrelation) Object.assign(launchIdentityFinalization, { delegation: options.launchDelegationCorrelation });
+	finalizeNativeChildLaunchIdentity(launch.session, launchIdentityFinalization);
 	const result: SingleResult = withRunContext({
 		index: options.index ?? 0,
 		agent: agent.name,

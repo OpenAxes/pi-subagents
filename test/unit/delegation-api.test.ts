@@ -125,10 +125,11 @@ describe("public subagent delegation contract", () => {
 		assert.equal(calls, 0);
 	});
 
-	it("runs structured delegation through the concurrent executor and preserves literal text metadata", async () => {
+	it("passes delegation correlation through the structured concurrent executor and preserves literal text metadata", async () => {
 		const events = new FakeEvents();
 		let ordinaryCalls = 0;
 		let observedParams: Record<string, unknown> | undefined;
+		let observedCorrelation: unknown;
 		const bridge = registerPromptTemplateDelegationBridge({
 			events,
 			getContext: () => ({ cwd: "/repo" }),
@@ -136,8 +137,9 @@ describe("public subagent delegation contract", () => {
 				ordinaryCalls++;
 				return { details: { mode: "single", results: [] } };
 			},
-			executeStructured: async (_id, params, _signal, _ctx, onUpdate) => {
+			executeStructured: async (_id, params, _signal, _ctx, onUpdate, correlation) => {
 				observedParams = params as unknown as Record<string, unknown>;
+				observedCorrelation = correlation;
 				onUpdate({ details: { mode: "single", runId: "run-1", results: [{ agent: "reviewer", model: "openai/gpt-5", thinking: "high" }], progress: [{ currentTool: "read" }] } });
 				return {
 					details: {
@@ -179,6 +181,7 @@ describe("public subagent delegation contract", () => {
 			usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 5, cost: 0.01, turns: 2, toolCalls: 6, durationMs: 7 },
 		} satisfies SubagentDelegationResponse);
 		assert.equal(ordinaryCalls, 0);
+		assert.deepEqual(observedCorrelation, { requestId: "attempt-1", ownerRunId: "owner-1", nodeId: "node-1" });
 		assert.deepEqual(observedParams, {
 			agent: "reviewer",
 			task: "Review evidence",

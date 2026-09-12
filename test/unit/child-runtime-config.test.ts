@@ -87,6 +87,27 @@ describe("child runtime config", () => {
 		assert.match(rewritten?.systemPrompt ?? "", /strict structured output contract/);
 	});
 
+	it("propagates root session lineage for top-level and nested native launches", () => {
+		const topLevel = buildInProcessChildLaunch({
+			host: "parent", cwd: process.cwd(), childAgentName: "worker", childIndex: 0,
+			sessionEnabled: false, runId: "root-lineage", parentSessionId: "root-session",
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+		});
+		assert.equal(topLevel.config.rootSessionId, "root-session");
+
+		const nested = buildInProcessChildLaunch({
+			host: "parent", cwd: process.cwd(), childAgentName: "reviewer", childIndex: 1,
+			sessionEnabled: false, runId: "nested-lineage", parentSessionId: "direct-parent",
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			inherited: {
+				depth: topLevel.config.depth,
+				rootSessionId: topLevel.config.rootSessionId,
+			},
+		});
+		assert.equal(nested.config.rootSessionId, "root-session");
+		assert.equal(nested.config.parentSessionId, "direct-parent");
+	});
+
 	it("evaluates the tool diagnostic against the available tools", () => {
 		assert.equal(evaluateChildToolDiagnostic(baseConfig(), ["read"]), undefined);
 		assert.equal(evaluateChildToolDiagnostic(baseConfig({ requiredTools: ["read"] }), ["read", "write"]), undefined);

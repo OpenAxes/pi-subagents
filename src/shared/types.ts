@@ -2389,6 +2389,8 @@ export interface RunSyncOptions {
 	onUpdate?: (r: import("@earendil-works/pi-agent-core").AgentToolResult<Details>) => void;
 	/** Internal structured-delegation transport optimization: skip unchanged live snapshots. */
 	suppressUnchangedDelegationUpdates?: boolean;
+	/** Package-internal correlation attached only by the structured delegation bridge. */
+	launchDelegationCorrelation?: import("../api/launch-identity.ts").NativeChildDelegationCorrelation;
 	onControlEvent?: (event: ControlEvent) => void;
 	/** Exposes a non-terminating detach callback while the child is active. */
 	onDetachReady?: (detach: (reason?: string) => boolean) => void;

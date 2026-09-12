@@ -21,6 +21,7 @@ import { createChildTranscriptWriter } from "../../src/shared/child-transcript.t
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
 import { discoverAgents, type AgentConfig } from "../../src/agents/agents.ts";
 import { registerBackgroundWorkProvider } from "../../src/api/background-work.ts";
+import { resolveNativeChildLaunchIdentity, type NativeChildLaunchIdentitySubject } from "../../src/api/launch-identity.ts";
 import { DIRS } from "../../src/shared/types.ts";
 import { releaseActiveRunIndex, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { resolveChildWatchdogConfig } from "../../src/watchdog/child-status.ts";
@@ -132,7 +133,21 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 	}
 	type NativeSession = Awaited<ReturnType<PiCodingAgentModule["createAgentSession"]>>["session"];
 	type Captured = { session: NativeSession; original: NativeSession["agent"]["streamFunction"]; runtime: NonNullable<Parameters<PiCodingAgentModule["createAgentSession"]>[0]>["modelRuntime"] };
-	async function fixture(run: (f: { pi: PiCodingAgentModule; cwd: string; agentDir: string; l: ReturnType<typeof launch>; factory: ReturnType<typeof createDefaultChildSessionFactory>; captured: Captured[]; acknowledge: (id: string) => void; requests: { body: Record<string, unknown> }[]; setResponses: (responses: (() => Response | Promise<Response>)[]) => void }) => Promise<void>, settings: Record<string, unknown> = {}, fresh = false) {
+	interface CapturedRequestBody {
+		model?: string;
+		messages?: readonly object[];
+		prompt_cache_key?: string;
+	}
+	interface FixtureSettings {
+		retry?: { enabled: boolean; maxRetries?: number; baseDelayMs?: number; provider: { maxRetries: number } };
+		compaction?: { enabled: boolean };
+	}
+	interface NativeIdentityCapture {
+		ctx: NativeChildLaunchIdentitySubject;
+		manager: NativeChildLaunchIdentitySubject;
+		identity: ReturnType<typeof resolveNativeChildLaunchIdentity>;
+	}
+	async function fixture(run: (f: { pi: PiCodingAgentModule; cwd: string; agentDir: string; l: ReturnType<typeof launch>; factory: ReturnType<typeof createDefaultChildSessionFactory>; captured: Captured[]; acknowledge: (id: string) => void; requests: { body: CapturedRequestBody }[]; setResponses: (responses: (() => Response | Promise<Response>)[]) => void; beforeSessionCreateSettles: (callback: () => void) => void }) => Promise<void>, settings: FixtureSettings = {}, fresh = false) {
 		const realPi = await sdk();
 		const cwd = mkdtempSync(join(tmpdir(), "readonly-factory-"));
 		const agentDir = join(cwd, "agent"); mkdirSync(agentDir);
@@ -149,7 +164,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 			manager.appendMessage({ role: "user", content: "Earlier context", timestamp: 1 });
 			manager.appendMessage({ role: "assistant", content: [{ type: "text", text: "Earlier answer" }], api: "openai-completions", provider: "baseten", model: "model-a", stopReason: "stop", timestamp: 2, usage: { ...usage, input: 101, output: 103, totalTokens: 204, cost: { ...usage.cost, total: 2 } } });
 		}
-		const requests: { body: Record<string, unknown> }[] = [];
+		const requests: { body: CapturedRequestBody }[] = [];
 		let responses: (() => Response | Promise<Response>)[] = [];
 		// Test process only: every HTTP operation is intercepted; never contact a provider.
 		globalThis.fetch = async (input, init) => {
@@ -166,6 +181,7 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 		};
 		const captured: Captured[] = [];
 		let eventBus: ReturnType<PiCodingAgentModule["createEventBus"]>;
+		let sessionCreateStarted: (() => void) | undefined;
 		// Observe public SDK objects without stubbing the runtime, session, adapter, or stream closure.
 		const observedPi: PiCodingAgentModule = { ...realPi, DefaultResourceLoader: class extends realPi.DefaultResourceLoader {
 			constructor(options: ConstructorParameters<PiCodingAgentModule["DefaultResourceLoader"]>[0]) {
@@ -173,12 +189,14 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 				super({ ...options, eventBus });
 			}
 		}, createAgentSession: async (options) => {
-			const result = await realPi.createAgentSession(options);
+			const creating = realPi.createAgentSession(options);
+			sessionCreateStarted?.();
+			const result = await creating;
 			captured.push({ session: result.session, original: result.session.agent.streamFunction, runtime: options?.modelRuntime });
 			return result;
 		} };
 		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => observedPi, shutdownTimeoutMs: 20 });
-		try { await run({ pi: realPi, cwd, agentDir, l, factory, captured, acknowledge: (id) => eventBus.emit("subagent:acknowledge-extension", { id }), requests, setResponses: (value) => { responses = value; } }); }
+		try { await run({ pi: realPi, cwd, agentDir, l, factory, captured, acknowledge: (id) => eventBus.emit("subagent:acknowledge-extension", { id }), requests, setResponses: (value) => { responses = value; }, beforeSessionCreateSettles: (callback) => { sessionCreateStarted = callback; } }); }
 		finally {
 			await factory.dispose(); globalThis.fetch = previousFetch;
 			if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousDir;
@@ -194,6 +212,90 @@ describe("native 0.85.1 factory evidence (synthetic transport, real configured M
 			parentSessionId: "resolved-parent", runId: "resolved-run", childAgentName: "reader", childIndex: 0,
 			sessionName: "resolved reader", forkCacheKey: "resolved-cache", systemPrompt: "Retain the completed read.",
 		});
+	}
+
+	it("real SDK binds native child launch identity during session_start and revokes it after disposal", async () => fixture(async ({ l, factory, captured, agentDir }) => {
+		const captureKey = `pi-subagents:launch-identity-test:${Date.now()}:${Math.random()}`;
+		const captureSymbol = Symbol.for(captureKey);
+		const extensionPath = join(agentDir, "identity-extension.ts");
+		const identityUrl = new URL("../../src/api/launch-identity.ts", import.meta.url).href;
+		writeFileSync(extensionPath, `
+import { resolveNativeChildLaunchIdentity } from ${JSON.stringify(identityUrl)};
+export default function (pi) {
+	pi.on("session_start", (_event, ctx) => {
+		globalThis[Symbol.for(${JSON.stringify(captureKey)})] = {
+			ctx,
+			manager: ctx.sessionManager,
+			identity: resolveNativeChildLaunchIdentity(ctx),
+		};
+	});
+}
+`);
+		const nativeLaunch = buildInProcessChildLaunch({
+			cwd: l.cwd, host: "parent", sessionEnabled: false, model: "baseten/model-a",
+			tools: ["read"], extensions: [extensionPath], allowNestedSubagents: false, waitToolEnabled: false,
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			parentSessionId: "real-parent", runId: "real-identity", childAgentName: "reader", childIndex: 3,
+		});
+		const child = await factory.create(nativeLaunch.session);
+		// SAFETY: The controlled extension above writes exactly NativeIdentityCapture at this private per-test symbol before factory creation resolves.
+		const capturedStartup = Object.getOwnPropertyDescriptor(globalThis, captureSymbol)?.value as NativeIdentityCapture | undefined;
+		try {
+			assert.equal(capturedStartup?.identity.verified, true);
+			assert.strictEqual(capturedStartup?.identity, resolveNativeChildLaunchIdentity(capturedStartup?.ctx));
+			assert.strictEqual(capturedStartup?.identity, resolveNativeChildLaunchIdentity(capturedStartup?.manager));
+			assert.strictEqual(capturedStartup?.identity, resolveNativeChildLaunchIdentity(captured[0]?.session));
+			await child.dispose();
+			assert.equal(resolveNativeChildLaunchIdentity(capturedStartup?.ctx).verified, false);
+			assert.equal(resolveNativeChildLaunchIdentity(capturedStartup?.manager).verified, false);
+			assert.equal(resolveNativeChildLaunchIdentity(captured[0]?.session).verified, false);
+		} finally {
+			Reflect.deleteProperty(globalThis, captureSymbol);
+		}
+	}, {}, true));
+
+	it("never verifies a launch mutated while real SDK session creation is in flight", async () => fixture(async ({ l, factory, captured, beforeSessionCreateSettles }) => {
+		const nativeLaunch = buildInProcessChildLaunch({
+			cwd: l.cwd, host: "parent", sessionEnabled: false, model: "baseten/model-a",
+			tools: ["read"], allowNestedSubagents: false, waitToolEnabled: false,
+			inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+			parentSessionId: "mutation-parent", runId: "mutation-run", childAgentName: "reader", childIndex: 0,
+		});
+		beforeSessionCreateSettles(() => { nativeLaunch.config.agent = "mutated-during-sdk-create"; });
+		const child = await factory.create(nativeLaunch.session);
+		assert.equal(resolveNativeChildLaunchIdentity(captured[0]?.session).verified, false);
+		assert.equal(resolveNativeChildLaunchIdentity(captured[0]?.session.sessionManager).verified, false);
+		assert.equal(resolveNativeChildLaunchIdentity(child).verified, false);
+		nativeLaunch.config.agent = "reader";
+		beforeSessionCreateSettles(() => {});
+		const retried = await factory.create(nativeLaunch.session);
+		assert.equal(resolveNativeChildLaunchIdentity(retried).verified, false, "post-create mutation permanently burns the certificate");
+		await Promise.all([child.dispose(), retried.dispose()]);
+	}, {}, true));
+
+	for (const mutation of ["replacement", "removal"] as const) {
+		it(`burns the reserved certificate after first-hook ${mutation} during real SDK creation`, async () => fixture(async ({ l, factory, captured, beforeSessionCreateSettles }) => {
+			const nativeLaunch = buildInProcessChildLaunch({
+				cwd: l.cwd, host: "parent", sessionEnabled: false, model: "baseten/model-a",
+				tools: ["read"], allowNestedSubagents: false, waitToolEnabled: false,
+				inheritProjectContext: false, inheritGlobalContext: false, inheritSkills: false,
+				parentSessionId: "hook-parent", runId: `hook-${mutation}`, childAgentName: "reader", childIndex: 0,
+			});
+			const originalHooks = [...nativeLaunch.session.hooks];
+			beforeSessionCreateSettles(() => {
+				if (mutation === "replacement") nativeLaunch.session.hooks[0] = { name: "replacement", factory() {} };
+				else nativeLaunch.session.hooks.shift();
+			});
+			const first = await factory.create(nativeLaunch.session);
+			assert.equal(resolveNativeChildLaunchIdentity(first).verified, false);
+			assert.equal(resolveNativeChildLaunchIdentity(captured[0]?.session).verified, false);
+			nativeLaunch.session.hooks.splice(0, nativeLaunch.session.hooks.length, ...originalHooks);
+			beforeSessionCreateSettles(() => {});
+			const retried = await factory.create(nativeLaunch.session);
+			assert.equal(resolveNativeChildLaunchIdentity(retried).verified, false, "restoring the first hook must not revive the reserved certificate");
+			assert.equal(resolveNativeChildLaunchIdentity(captured[1]?.session).verified, false);
+			await Promise.all([first.dispose(), retried.dispose()]);
+		}, {}, true));
 	}
 
 	it("executes an auto-discovered builtin override from an explicit reviewer tool allowlist", async () => fixture(async ({ l, factory, captured, requests, setResponses, agentDir }) => {

@@ -743,9 +743,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		getContext: () => state.lastUiContext,
 		execute: (requestId, params, signal, ctx, onUpdate) =>
 			executeSubagentCollapsed(requestId, params, signal, onUpdate, ctx),
-		executeStructured: (requestId, params, signal, ctx, onUpdate) => {
+		executeStructured: (requestId, params, signal, ctx, onUpdate, correlation) => {
 			if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
-			return executor.executeDelegated(requestId, params, signal, onUpdate, ctx);
+			return executor.executeDelegated(requestId, params, signal, onUpdate, ctx, correlation);
 		},
 	});
 

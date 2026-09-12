@@ -104,6 +104,7 @@ import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, stopStoppableAsyncStatusChildren } from "../shared/child-identity.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import { getExternalJobProvider } from "../../api/external-job-provider.ts";
+import type { NativeChildDelegationCorrelation } from "../../api/launch-identity.ts";
 import { externalJobFollowUpRequestDigest, externalJobFollowUpRequestId, externalJobFollowUpRunId, externalJobPromptDigest, externalJobStableJson } from "../shared/external-job-runner.ts";
 import { externalCliReceiptMetadata, normalizeExternalCliRunnerStatus } from "../shared/external-cli-contract.ts";
 import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
@@ -500,6 +501,7 @@ interface ExecutionContextData {
 	controlConfig: ResolvedControlConfig;
 	/** Structured delegation consumers do not need duration-only heartbeat snapshots. */
 	suppressUnchangedDelegationUpdates?: boolean;
+	launchDelegationCorrelation?: NativeChildDelegationCorrelation;
 	intercomBridge: IntercomBridgeState;
 	nestedRoute?: NestedRouteInfo;
 	timeoutMs?: number;
@@ -3921,6 +3923,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			waitToolDefaultTimeoutMs: deps.waitToolDefaultTimeoutMs,
 			onUpdate: forwardSingleUpdate,
 			suppressUnchangedDelegationUpdates,
+			launchDelegationCorrelation: data.launchDelegationCorrelation,
 			controlConfig,
 			onControlEvent,
 			intercomSessionName: childIntercomTarget,
@@ -4857,6 +4860,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		signal: AbortSignal,
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
+		correlation?: NativeChildDelegationCorrelation,
 	) => Promise<AgentToolResult<Details>>;
 	/** Scheduled launches retain their owning context without replacing the live active session. */
 	executeScheduled: (
@@ -4869,6 +4873,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	getCurrentSupervisorOwnerStates: () => Iterable<SubagentState>;
 } {
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
+	const delegatedLaunchCorrelations = new WeakMap<object, NativeChildDelegationCorrelation>();
 	const delegatedZeroToolBudgets = new WeakSet<object>();
 	const delegatedExecutions = new WeakSet<object>();
 	const publicExecutions = new WeakSet<object>();
@@ -4888,6 +4893,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const workflowLaunchObserver = workflowLaunchObservers.get(params);
 		const inheritedUsageBudget = workflowOwnedUsageBudgets.get(params);
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
+		const launchDelegationCorrelation = delegatedLaunchCorrelations.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
 		const delegatedExecution = delegatedExecutions.has(params);
 		const publicExecution = publicExecutions.has(params);
@@ -6974,6 +6980,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			asyncRunId,
 			controlConfig,
 			...(delegatedExecution ? { suppressUnchangedDelegationUpdates: true } : {}),
+			launchDelegationCorrelation,
 			intercomBridge,
 			nestedRoute,
 			timeoutMs: foregroundTimeout.timeoutMs,
@@ -7260,6 +7267,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		signal: AbortSignal,
 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
+		correlation?: NativeChildDelegationCorrelation,
 	): Promise<AgentToolResult<Details>> => {
 		const delegatedParams = { ...params };
 		const privateParams = delegatedParams as SubagentParamsLike & {
@@ -7274,6 +7282,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		delete privateParams.delegatedAllowZeroToolBudget;
 		delete privateParams.delegatedWorkflowPermit;
 		if (thinkingOverride !== undefined) delegatedThinkingOverrides.set(delegatedParams, thinkingOverride);
+		if (correlation) delegatedLaunchCorrelations.set(delegatedParams, correlation);
 		if (allowZeroToolBudget) delegatedZeroToolBudgets.add(delegatedParams);
 		if (workflowPermit) workflowPermitContexts.set(delegatedParams, { root: workflowPermit });
 		delegatedExecutions.add(delegatedParams);

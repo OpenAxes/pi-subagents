@@ -19,7 +19,9 @@
     "./intercom-bridge": "./src/api/intercom-bridge.ts",
     "./child-tool-plan": "./src/api/child-tool-plan.ts",
     "./shared-types": "./src/api/shared-types.ts",
-    "./project-panes": "./src/api/project-panes.ts"
+    "./project-panes": "./src/api/project-panes.ts",
+    "./launch-identity": "./src/api/launch-identity.ts",
+    "./native-settlement": "./src/api/native-settlement.ts"
   },
   "repository": {
     "type": "git",

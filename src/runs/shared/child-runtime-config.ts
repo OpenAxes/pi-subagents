@@ -66,6 +66,8 @@ export interface ChildRuntimeConfig {
 	orchestratorTarget?: string;
 	orchestratorSessionId?: string;
 	parentSessionId?: string;
+	/** Root of the host-recorded native-child session lineage. */
+	rootSessionId?: string;
 	supervisorChannelDir?: string;
 	/** Route the child reports nested runs on; set only for fanout-authorized children. */
 	nestedRoute?: ChildNestedRoute;

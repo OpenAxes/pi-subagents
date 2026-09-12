@@ -95,6 +95,7 @@ import {
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
 import type { InheritedChildRuntime } from "../shared/child-launch.ts";
 import { buildRunnerChildLaunch } from "./runner-child-launch.ts";
+import { finalizeNativeChildLaunchIdentity } from "../shared/launch-identity.ts";
 import { normalizeExtensionBindings } from "../shared/extension-bindings.ts";
 import type { ChildSessionFactory, DefaultChildSessionFactoryOptions } from "../shared/child-session.ts";
 import { getSettledReadonlyChild, runChildSession, type ChildEvent, type RunChildSessionInput, type RunChildSessionResult, type StepSteerHandler } from "./run-child-session.ts";
@@ -1180,6 +1181,11 @@ export async function runSingleStepInner(
 				...(extensionBindings ? { extensionBindings } : {}),
 			}));
 		}
+		finalizeNativeChildLaunchIdentity(launch.session, omitUndefinedProperties({
+			launchContractDigest: step.definitionDigest ? actualLaunchContractDigest : undefined,
+			context: step.context,
+			thinking: resolveEffectiveThinking(candidate, step.thinking),
+		}));
 		capabilityAudit = attemptCapabilityAudit;
 		// Each attempt rewrites the step output log; synchronous appends keep a
 		// retried attempt from interleaving with the previous attempt's flush.

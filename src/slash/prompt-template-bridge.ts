@@ -9,6 +9,7 @@ import {
 	type SubagentDelegationResponse,
 	type SubagentDelegationUpdate,
 } from "../api/delegation.ts";
+import type { NativeChildDelegationCorrelation } from "../api/launch-identity.ts";
 import { parseSubagentDelegationRequest } from "./delegation-request.ts";
 import {
 	parsePromptTemplateRequest,
@@ -51,6 +52,7 @@ interface PromptTemplateBridgeOptions<Ctx extends { cwd?: string }> {
 		signal: AbortSignal,
 		ctx: Ctx,
 		onUpdate: (result: PromptTemplateBridgeResult) => void,
+		correlation: NativeChildDelegationCorrelation,
 	) => Promise<PromptTemplateBridgeResult>;
 }
 
@@ -327,29 +329,27 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
 		);
 
 		try {
-			const executeRequest = structuredRequest && options.executeStructured
-				? options.executeStructured
-				: options.execute;
 			let lastStructuredUpdate: SubagentDelegationUpdate | undefined;
-			const result = await executeRequest(
-				requestId,
-				params,
-				controller.signal,
-				ctx,
-				(update) => {
-					if (key ? !ownsAttempt(key, controller) : !ownsLegacyRequest(requestId, controller)) return;
-					if (structuredRequest) {
-						const payload = toSubagentDelegationUpdate(structuredRequest, update);
-						if (payload && (!lastStructuredUpdate || !sameStructuredDelegationUpdateProgress(lastStructuredUpdate, payload))) {
-							lastStructuredUpdate = payload;
-							options.events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, payload);
-						}
-						return;
+			const handleUpdate = (update: PromptTemplateBridgeResult) => {
+				if (key ? !ownsAttempt(key, controller) : !ownsLegacyRequest(requestId, controller)) return;
+				if (structuredRequest) {
+					const payload = toSubagentDelegationUpdate(structuredRequest, update);
+					if (payload && (!lastStructuredUpdate || !sameStructuredDelegationUpdateProgress(lastStructuredUpdate, payload))) {
+						lastStructuredUpdate = payload;
+						options.events.emit(SUBAGENT_DELEGATION_UPDATE_EVENT, payload);
 					}
-					const payload = toDelegationUpdate(requestId, update);
-					if (payload) options.events.emit(PROMPT_TEMPLATE_SUBAGENT_UPDATE_EVENT, payload);
-				},
-			);
+					return;
+				}
+				const payload = toDelegationUpdate(requestId, update);
+				if (payload) options.events.emit(PROMPT_TEMPLATE_SUBAGENT_UPDATE_EVENT, payload);
+			};
+			const result = structuredRequest && options.executeStructured
+				? await options.executeStructured(requestId, params, controller.signal, ctx, handleUpdate, {
+					requestId,
+					ownerRunId: structuredRequest.ownerRunId,
+					nodeId: structuredRequest.nodeId,
+				})
+				: await options.execute(requestId, params, controller.signal, ctx, handleUpdate);
 			if (key ? !ownsAttempt(key, controller) : !ownsLegacyRequest(requestId, controller)) return;
 			if (structuredRequest && key) {
 				emitTerminal(key, toSubagentDelegationResponse(structuredRequest, result, controller.signal.aborted));

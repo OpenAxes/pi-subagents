@@ -35,6 +35,7 @@ import { createCapturedChildHooks, withChildSessionErrorReporting } from "./chil
 import type { ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import type { ChildSessionLaunch, ChildSessionStorage } from "./child-session.ts";
 import type { ArbiterModelContext } from "./llm-intent-arbiter.ts";
+import { createNativeChildLaunchCertificate } from "./launch-identity.ts";
 
 /** Environment variable pi-mcp-adapter reads for the tools a child may expose. */
 export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
@@ -44,19 +45,19 @@ export const MCP_DIRECT_TOOLS_ENV = "MCP_DIRECT_TOOLS";
  * launches inherits. Serialized into the background runner config; the
  * foreground path passes the executor's full `ChildRuntimeConfig`.
  */
-export type InheritedChildRuntime = Pick<ChildRuntimeConfig, "depth" | "maxDepth" | "nestedRoute" | "nestedParent" | "capabilityCeiling" | "thinkingCeiling" | "runFanoutBudget">;
+export type InheritedChildRuntime = Pick<ChildRuntimeConfig, "depth" | "maxDepth" | "rootSessionId" | "nestedRoute" | "nestedParent" | "capabilityCeiling" | "thinkingCeiling" | "runFanoutBudget">;
 
 export function inheritedChildRuntime(config: ChildRuntimeConfig | undefined): InheritedChildRuntime | undefined {
 	if (!config) return undefined;
-	return {
-		depth: config.depth,
-		...(config.maxDepth !== undefined ? { maxDepth: config.maxDepth } : {}),
-		...(config.nestedRoute ? { nestedRoute: config.nestedRoute } : {}),
-		...(config.nestedParent ? { nestedParent: config.nestedParent } : {}),
-		...(config.capabilityCeiling ? { capabilityCeiling: config.capabilityCeiling } : {}),
-		...(config.thinkingCeiling ? { thinkingCeiling: config.thinkingCeiling } : {}),
-		...(config.runFanoutBudget ? { runFanoutBudget: config.runFanoutBudget } : {}),
-	};
+	const inherited: InheritedChildRuntime = { depth: config.depth };
+	if (config.maxDepth !== undefined) Object.assign(inherited, { maxDepth: config.maxDepth });
+	if (config.rootSessionId !== undefined) Object.assign(inherited, { rootSessionId: config.rootSessionId });
+	if (config.nestedRoute) Object.assign(inherited, { nestedRoute: config.nestedRoute });
+	if (config.nestedParent) Object.assign(inherited, { nestedParent: config.nestedParent });
+	if (config.capabilityCeiling) Object.assign(inherited, { capabilityCeiling: config.capabilityCeiling });
+	if (config.thinkingCeiling) Object.assign(inherited, { thinkingCeiling: config.thinkingCeiling });
+	if (config.runFanoutBudget) Object.assign(inherited, { runFanoutBudget: config.runFanoutBudget });
+	return inherited;
 }
 
 export interface BuildInProcessChildLaunchInput {
@@ -224,6 +225,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		fs.mkdirSync(path.join(supervisorDir, "replies"), { recursive: true });
 	}
 	const thinkingCeiling = intersectThinkingCeilings(input.thinkingCeiling, inherited?.thinkingCeiling);
+	const rootSessionId = inherited?.rootSessionId ?? input.parentSessionId;
 
 	let structuredValue: unknown;
 	let structuredAcceptanceReport: unknown;
@@ -279,6 +281,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 		...(toolPlan.effectiveMcpTools.length > 0 ? { mcpDirectTools: toolPlan.effectiveMcpTools } : {}),
 		fast: input.fast === true,
 	};
+	if (rootSessionId !== undefined) Object.assign(config, { rootSessionId });
 	const capturedHooks = createCapturedChildHooks(config, input.host === "runner");
 
 	const extensionPaths = toolPlan.extensionArgs.filter((extensionPath) => !isSubagentRuntimeExtensionPath(extensionPath));
@@ -309,6 +312,7 @@ export function buildInProcessChildLaunch(input: BuildInProcessChildLaunchInput)
 			? input.systemPromptMode === "replace" ? { systemPrompt: taggedPrompt } : { appendSystemPrompt: taggedPrompt }
 			: {}),
 	};
+	createNativeChildLaunchCertificate({ session, toolPlan, launchResolvedExtensions });
 
 	return {
 		toolPlan,

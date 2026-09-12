@@ -270,6 +270,32 @@ Boundaries:
 - Some host-owned facts, such as exact fork snapshots, nested async roots, and live model registries, can only be proven by the Pi host; those appear as `host_required` diagnostics instead of silently pretending to be exact.
 - Preflight reads the extension config, so `defaultSubagentContext: "fresh"` or `"fork"` affects omitted context in the same way as execution. Explicit `context` still wins.
 
+## Native child launch identity
+
+An independently loaded child extension can resolve the launch identity of the native Pi session in which it is executing:
+
+```ts
+import { resolveNativeChildLaunchIdentity } from "pi-subagents/launch-identity";
+
+export default function (pi) {
+  pi.on("session_start", (_event, ctx) => {
+    const identity = resolveNativeChildLaunchIdentity(ctx);
+    if (!identity.verified || identity.role !== "native-child") {
+      // Unknown, stale, fake, external, or non-native sessions fail closed.
+      return;
+    }
+    console.log(identity.agent, identity.parentSessionId, identity.contract.cwd);
+    // Identity is provenance evidence, not an authorization grant.
+  });
+}
+```
+
+The resolver accepts the exact live `AgentSession`, pi-subagents `ChildSession`, SDK `SessionManager`, or an `ExtensionContext` carrying that exact manager. At binding time, the session and manager must be actual instances of the constructors exported by the loaded Pi SDK; structural lookalikes fail closed. Resolution then uses host-owned object identity rather than session IDs, names, prompts, tool arguments, environment labels, or caller declarations. Results are deeply frozen snapshots. A copied object with matching IDs is unverified, and the old session, manager, and context become unverified after abort or disposal. External CLI/job adapters are always unverified by this API.
+
+A verified result proves only that pi-subagents' native launcher created the queried live SDK session in the current host process from the reported bounded launch projection. `rootSessionId` is the root of the host-recorded native-child lineage; it does not attest a human, an authorized root, or workspace ownership. The result does not prove approval, authentication, authorization grants, governance policy, merge/release permission, OS isolation, resistance to hostile code already running with the same process/OS credentials, or full equivalence to preflight and later per-turn extension mutations. Never infer root status from an unverified result, and never grant authority based solely on launch identity.
+
+The contract intentionally excludes tasks and system prompts, permission and structured-output callbacks, process environment, approval state, and authentication material. `launchContractDigest` is present only when the executing host recomputed the actual attempt digest; structured foreground delegation additionally carries its exact `{ requestId, ownerRunId, nodeId }` correlation tuple.
+
 ## Structured delegation API
 
 Other Pi extensions can ask `pi-subagents` to run one configured foreground leaf agent through the structured delegation API. It uses the established `prompt-template:subagent:*` event family and the same executor as the `subagent` tool; it does not add another launcher.

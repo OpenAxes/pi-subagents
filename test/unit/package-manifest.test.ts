@@ -31,13 +31,14 @@ const expectedHostDevVersions = {
 	"@earendil-works/pi-tui": "0.81.0",
 } satisfies Record<Exclude<(typeof hostPeerPackages)[number], "@earendil-works/pi-coding-agent">, string>;
 
-test("the root entrypoint exposes the runtime error flag to TypeScript consumers", () => {
+test("the root entrypoint and launch-identity API typecheck for TypeScript consumers", () => {
 	const consumerRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-types-"));
 	try {
 		fs.writeFileSync(path.join(consumerRoot, "consumer.ts"), `
 import "pi-subagents";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { registerWorkflowResource, type RegisterWorkflowResourceInput, type WorkflowResourceDefinition, type WorkflowResourceRegistration } from "pi-subagents/workflow-resources";
+import { resolveNativeChildLaunchIdentity, type NativeChildLaunchIdentityResult } from "pi-subagents/launch-identity";
 
 const definition: WorkflowResourceDefinition = {
 	name: "consumer.check", version: 1,
@@ -55,7 +56,9 @@ const result: AgentToolResult<undefined> = {
 	isError: true,
 };
 
+const identity: NativeChildLaunchIdentityResult = resolveNativeChildLaunchIdentity(null);
 void result.isError;
+void identity.role;
 `, "utf-8");
 		fs.writeFileSync(path.join(consumerRoot, "tsconfig.json"), JSON.stringify({
 			compilerOptions: {
@@ -72,6 +75,7 @@ void result.isError;
 				paths: {
 					"pi-subagents": [path.join(projectRoot, "index.ts")],
 					"pi-subagents/workflow-resources": [path.join(projectRoot, "src/api/workflow-resources.ts")],
+					"pi-subagents/launch-identity": [path.join(projectRoot, "src/api/launch-identity.ts")],
 				"@earendil-works/pi-agent-core": [path.join(projectRoot, "node_modules", "@earendil-works", "pi-agent-core", "dist", "index.d.ts")],
 				},
 			},
@@ -128,6 +132,8 @@ test("published extension APIs use supported package entrypoints", async () => {
 		"./child-tool-plan": "./src/api/child-tool-plan.ts",
 		"./shared-types": "./src/api/shared-types.ts",
 		"./project-panes": "./src/api/project-panes.ts",
+		"./launch-identity": "./src/api/launch-identity.ts",
+		"./native-settlement": "./src/api/native-settlement.ts",
 	});
 	const agents = await import("pi-subagents/agents");
 	assert.equal(agents.RUNTIME_AGENT_REGISTER_EVENT, "pi-subagents:runtime-agent-register:v1");
@@ -168,6 +174,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(typeof sharedTypes.wrapForkTask, "function");
 	assert.equal(typeof sharedTypes.DEFAULT_FORK_PREAMBLE, "string");
 	assert.equal("TEMP_ROOT_DIR" in sharedTypes, false);
+	const launchIdentity = await import("pi-subagents/launch-identity");
+	assert.deepEqual(Object.keys(launchIdentity), ["resolveNativeChildLaunchIdentity"]);
+	assert.equal(launchIdentity.resolveNativeChildLaunchIdentity({}).verified, false);
 	const projectPanes = await import("pi-subagents/project-panes");
 	assert.equal(projectPanes.PROJECT_PANES_API_VERSION, 1);
 	assert.equal(typeof projectPanes.openProjectPane, "function");
